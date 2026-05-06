@@ -48,6 +48,8 @@ body{font-family:'Tajawal',sans-serif;background:var(--off);color:var(--g800);di
 .filter-select:focus{border-color:var(--navy)}
 .btn-refresh{background:var(--plum);color:#fff;border:none;padding:9px 18px;border-radius:9px;font-family:'Tajawal',sans-serif;font-weight:700;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:7px;transition:.2s}
 .btn-refresh:hover{background:var(--plum-dark)}
+.btn-export{background:var(--navy);color:#fff;border:none;padding:9px 18px;border-radius:9px;font-family:'Tajawal',sans-serif;font-weight:700;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:7px;transition:.2s}
+.btn-export:hover{background:#001040}
 .btn-logout{background:transparent;color:rgba(255,255,255,.7);border:1px solid rgba(255,255,255,.25);padding:7px 14px;border-radius:8px;font-family:'Tajawal',sans-serif;font-size:11px;cursor:pointer;transition:.2s}
 .btn-logout:hover{background:rgba(255,255,255,.1);color:#fff}
 
@@ -172,6 +174,10 @@ tr:hover td{background:#f5f0f8}
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
         تحديث
       </button>
+      <button class="btn-export" onclick="exportAll()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+        تصدير Excel
+      </button>
     </div>
   </div>
 
@@ -187,6 +193,7 @@ tr:hover td{background:#f5f0f8}
   </div>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script type="module">
 import { initializeApp }    from "https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.10.0/firebase-auth.js";
@@ -279,6 +286,7 @@ window.loadAll = async function() {
   }));
 
   document.getElementById('lastUpdate').textContent = 'آخر تحديث: '+new Date().toLocaleTimeString('ar-SA');
+  window._cachedWarehouses = results;
   buildSummaryCards(results, key, m, y);
   buildWhSections(results, key);
 };
@@ -287,6 +295,9 @@ window.loadAll = async function() {
 function buildSummaryCards(warehouses, key, m, y) {
   const el = document.getElementById('summaryCards');
   let totalEmp=0, totalOTEmps=0, totalEvals=0, totalRated=0, totalEquip=0, urgentEquip=0;
+  let totalDispatched=0, totalShortQty=0, totalRushOrders=0, totalCancelled=0;
+  let totalASNtrk=0, totalASNqty=0;
+  const mNum = parseInt(m), yNum = parseInt(y);
 
   for(const wh of warehouses) {
     if(!wh.data) continue;
@@ -298,16 +309,47 @@ function buildSummaryCards(warehouses, key, m, y) {
     const eq = wh.data.equipment||[];
     totalEquip += eq.length;
     urgentEquip += eq.filter(e=>parseInt(e.maintHours)-parseInt(e.opHours)<=100).length;
+
+    // Outbound (filter by month/year from monthly array)
+    const ob = wh.data.outbound;
+    if(ob?.monthly) {
+      ob.monthly.filter(mo=>mo.month==mNum&&mo.year==yNum||
+        (typeof mo.mo!=='undefined'&&mo.mo==mNum&&mo.year==yNum)).forEach(mo=>{
+        totalDispatched += mo.orders||0;
+        totalShortQty   += mo.shQty||0;
+        totalRushOrders += mo.rush||0;
+      });
+      const cancelMo = (ob.cancelledMonthly||[]).find(mo=>mo.year==yNum&&MO[mo.month]==mNum);
+      if(cancelMo) totalCancelled += cancelMo.count||0;
+    }
+
+    // ASN
+    const asn = wh.data.asn;
+    if(asn?.monthly) {
+      asn.monthly.filter(mo=>mo.mo==mNum&&mo.year==yNum).forEach(mo=>{
+        totalASNtrk += mo.orders||0;
+        totalASNqty += mo.qty||0;
+      });
+    }
   };
 
   const mName = MONTHS[(parseInt(m)||1)-1];
   el.innerHTML = `
+    <div style="grid-column:1/-1;font-size:10px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.5px;padding-bottom:6px;border-bottom:1px solid var(--g100);margin-bottom:4px">👥 الحضور والموارد</div>
     <div class="sum-card c-navy"><div class="sum-lbl">إجمالي الموظفين</div><div class="sum-val">${totalEmp}</div><div class="sum-sub">${mName} ${y}</div></div>
     <div class="sum-card c-green"><div class="sum-lbl">لديهم عمل إضافي</div><div class="sum-val">${totalOTEmps}</div><div class="sum-sub">Overtime</div></div>
-    <div class="sum-card c-plum"><div class="sum-lbl">موظفون مُقيَّمون</div><div class="sum-val">${totalEvals}</div><div class="sum-sub">من ${totalEvals} إجمالي</div></div>
+    <div class="sum-card c-plum"><div class="sum-lbl">مُقيَّمون</div><div class="sum-val">${totalEvals}</div><div class="sum-sub">موظف</div></div>
     <div class="sum-card c-cyan"><div class="sum-lbl">لديهم حوافز</div><div class="sum-val">${totalRated}</div><div class="sum-sub">Incentive > 0%</div></div>
     <div class="sum-card c-orange"><div class="sum-lbl">معدات مسجلة</div><div class="sum-val">${totalEquip}</div><div class="sum-sub">جميع المستودعات</div></div>
     <div class="sum-card c-red"><div class="sum-lbl">تحتاج صيانة</div><div class="sum-val">${urgentEquip}</div><div class="sum-sub">≤ 100 ساعة</div></div>
+
+    <div style="grid-column:1/-1;font-size:10px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.5px;padding-bottom:6px;border-bottom:1px solid var(--g100);margin-top:8px;margin-bottom:4px">📤 Outbound & ASN</div>
+    <div class="sum-card c-navy"><div class="sum-lbl">Dispatched Orders</div><div class="sum-val">${totalDispatched.toLocaleString()}</div><div class="sum-sub">جميع المستودعات</div></div>
+    <div class="sum-card c-red"><div class="sum-lbl">Short QTY</div><div class="sum-val">${totalShortQty.toLocaleString()}</div><div class="sum-sub">نقص في التسليم</div></div>
+    <div class="sum-card c-orange"><div class="sum-lbl">Rush Orders</div><div class="sum-val">${totalRushOrders.toLocaleString()}</div><div class="sum-sub">طلبات عاجلة</div></div>
+    <div class="sum-card c-plum"><div class="sum-lbl">Cancelled</div><div class="sum-val">${totalCancelled.toLocaleString()}</div><div class="sum-sub">طلبات ملغاة</div></div>
+    <div class="sum-card c-green"><div class="sum-lbl">ASN Receipts (TRK)</div><div class="sum-val">${totalASNtrk.toLocaleString()}</div><div class="sum-sub">جميع المستودعات</div></div>
+    <div class="sum-card c-cyan"><div class="sum-lbl">ASN Received QTY</div><div class="sum-val">${(totalASNqty/1000).toFixed(1)}K</div><div class="sum-sub">إجمالي الكميات</div></div>
   `;
 }
 
@@ -344,6 +386,7 @@ function buildWhSections(warehouses, key) {
 
         ${att ? buildAttSection(att) : ''}
         ${evals.length ? buildEvalSection(evals) : ''}
+        ${buildObAsnSection(wh.data, m, y)}
         ${buildEquipSection(counts, equip)}
       </div>`;
     el.appendChild(sec);
@@ -404,6 +447,73 @@ function buildEvalSection(evals) {
 }
 
 // ── Equipment ──────────────────────────────────────────────────
+function buildObAsnSection(data, m, y) {
+  const ob  = data?.outbound;
+  const asn = data?.asn;
+  const mNum = parseInt(m), yNum = parseInt(y);
+  const fmt = v => (v||0).toLocaleString();
+  const r1  = v => Math.round((v||0)*10)/10;
+
+  let html = '';
+
+  // ── Outbound ──────────────────────────────────────────────────
+  if(ob?.monthly) {
+    const mo = ob.monthly.find(x=>x.mo==mNum&&x.year==yNum);
+    if(mo) {
+      const cancelMo = (ob.cancelledMonthly||[]).find(c=>c.year==yNum&&MO[c.month]==mNum);
+      const cancelled = cancelMo?.count||0;
+      const rushPct = mo.orders ? ((mo.rush/mo.orders)*100).toFixed(1) : 0;
+      html += `<div class="sub-sec">
+        <div class="sub-sec-title">📤 Outbound Summary</div>
+        <div class="kpi-row">
+          <div class="kpi"><div class="kpi-lbl">Dispatched</div><div class="kpi-val" style="color:var(--navy)">${fmt(mo.orders)}</div></div>
+          <div class="kpi"><div class="kpi-lbl">Rush Orders</div><div class="kpi-val" style="color:var(--red)">${fmt(mo.rush)}</div><div class="kpi-sub">${rushPct}% من الإجمالي</div></div>
+          <div class="kpi"><div class="kpi-lbl">Cancelled</div><div class="kpi-val" style="color:var(--g600)">${fmt(cancelled)}</div></div>
+          <div class="kpi"><div class="kpi-lbl">Ordered QTY</div><div class="kpi-val">${fmt(mo.ordQty)}</div></div>
+          <div class="kpi"><div class="kpi-lbl">Short QTY</div><div class="kpi-val" style="color:var(--red)">${fmt(mo.shQty)}</div></div>
+          <div class="kpi"><div class="kpi-lbl">Dispatched QTY</div><div class="kpi-val" style="color:var(--green)">${fmt(mo.disQty)}</div></div>
+          <div class="kpi"><div class="kpi-lbl">Median CS</div><div class="kpi-val">${r1(mo.medCS)}</div><div class="kpi-sub">ساعة</div></div>
+          <div class="kpi"><div class="kpi-lbl">Median Picking</div><div class="kpi-val">${r1(mo.medPick)}</div><div class="kpi-sub">ساعة</div></div>
+        </div>`;
+
+      // Rush detail
+      if(mo.rush>0) {
+        html += `<div style="background:#FEF5F5;border:1px solid #F5C6CB;border-radius:8px;padding:10px 14px;margin-top:6px">
+          <div style="font-size:10px;font-weight:800;color:var(--red);margin-bottom:8px">🚨 Rush Orders تفصيل</div>
+          <div class="kpi-row">
+            <div class="kpi"><div class="kpi-lbl">Rush Count</div><div class="kpi-val" style="color:var(--red)">${fmt(mo.rush)}</div></div>
+            <div class="kpi"><div class="kpi-lbl">Rush Ordered</div><div class="kpi-val">${fmt(mo.rushOrdQty||0)}</div></div>
+            <div class="kpi"><div class="kpi-lbl">Rush Short</div><div class="kpi-val" style="color:var(--red)">${fmt(mo.rushShQty||0)}</div></div>
+            <div class="kpi"><div class="kpi-lbl">Rush Median CS</div><div class="kpi-val">${r1(mo.rushMedCS||0)}</div><div class="kpi-sub">ساعة</div></div>
+            <div class="kpi"><div class="kpi-lbl">Rush Median Pick</div><div class="kpi-val">${r1(mo.rushMedPick||0)}</div><div class="kpi-sub">ساعة</div></div>
+          </div>
+        </div>`;
+      }
+      html += `</div>`;
+    }
+  }
+
+  // ── ASN ───────────────────────────────────────────────────────
+  if(asn?.monthly) {
+    const mo = asn.monthly.find(x=>x.mo==mNum&&x.year==yNum);
+    if(mo) {
+      html += `<div class="sub-sec">
+        <div class="sub-sec-title">🏭 ASN Receipts</div>
+        <div class="kpi-row">
+          <div class="kpi"><div class="kpi-lbl">TRK (Inbound)</div><div class="kpi-val" style="color:var(--navy)">${fmt(mo.orders)}</div></div>
+          <div class="kpi"><div class="kpi-lbl">PO Lines</div><div class="kpi-val">${fmt(mo.lines)}</div></div>
+          <div class="kpi"><div class="kpi-lbl">Received QTY</div><div class="kpi-val" style="color:var(--green)">${fmt(mo.qty)}</div></div>
+          <div class="kpi"><div class="kpi-lbl">أيام عمل</div><div class="kpi-val">${mo.days}</div></div>
+          <div class="kpi"><div class="kpi-lbl">متوسط TRK/يوم</div><div class="kpi-val" style="color:var(--cyan)">${r1(mo.avgOrd)}</div></div>
+          <div class="kpi"><div class="kpi-lbl">متوسط QTY/يوم</div><div class="kpi-val" style="color:var(--cyan)">${r1(mo.avgQty).toLocaleString()}</div></div>
+        </div>
+      </div>`;
+    }
+  }
+
+  return html;
+}
+
 function buildEquipSection(counts, equip) {
   const hasEquip = EQUIP_DEF.some(d=>(counts[d.key]||0)>0)||equip.length;
   if(!hasEquip) return '';
@@ -422,6 +532,224 @@ function buildEquipSection(counts, equip) {
     ${equip.length?`<div class="tw"><table><thead><tr><th>المعدة</th><th>ساعات التشغيل</th><th>موعد الصيانة</th><th>المتبقي</th><th>الحالة</th></tr></thead><tbody>${eRows}</tbody></table></div>`:''}
   </div>`;
 }
+
+// ── Export to Excel ────────────────────────────────────────────
+window.exportAll = function() {
+  const m     = document.getElementById('fMonth').value;
+  const y     = document.getElementById('fYear').value;
+  const key   = y + '_' + m;
+  const mName = MONTHS[(parseInt(m)||1)-1];
+
+  // get cached warehouse data
+  const whSec = document.getElementById('whSections');
+  if(!whSec || !whSec.innerHTML.trim() || whSec.innerHTML.includes('جاري جلب')) {
+    alert('انتظر حتى تكتمل البيانات أولاً'); return;
+  }
+
+  const wb = XLSX.utils.book_new();
+
+  // ══ Sheet 1: الحوافز الإجمالية (مجمّعة) ════════════════════
+  const incentiveRows = [];
+  let totalIncentiveEmps = 0, totalOver100 = 0, totalMid = 0, totalZero = 0;
+
+  for(const wh of window._cachedWarehouses || []) {
+    const evals = (wh.data?.evaluations||[]).filter(e=>e.month==m&&e.year==y);
+    if(!evals.length) continue;
+    for(const e of evals) {
+      incentiveRows.push({
+        'المستودع':     wh.name,
+        'الاسم':        e.name,
+        'الوظيفة':      e.role||'—',
+        'القسم':        e.section||'—',
+        'الشركة':       e.company||'—',
+        'الإنجاز %':    parseFloat(e.achievement)||0,
+        'نسبة الحافز %':e.incentive||0,
+        'ملاحظات':      e.notes||'—',
+        'شهر التقييم':  mName+' '+y,
+      });
+      totalIncentiveEmps++;
+      const p = e.incentive||0;
+      if(p>=100) totalOver100++;
+      else if(p>0) totalMid++;
+      else totalZero++;
+    }
+  }
+
+  // Summary row at top
+  const incentiveSummary = [
+    {'المستودع':'── ملخص إجمالي ──','الاسم':'','الوظيفة':'','القسم':'','الشركة':'',
+     'الإنجاز %':'','نسبة الحافز %':'','ملاحظات':'','شهر التقييم':mName+' '+y},
+    {'المستودع':'إجمالي مُقيَّمون','الاسم':totalIncentiveEmps,'الوظيفة':'','القسم':'','الشركة':'',
+     'الإنجاز %':'','نسبة الحافز %':'','ملاحظات':'','شهر التقييم':''},
+    {'المستودع':'حافز 100%+','الاسم':totalOver100,'الوظيفة':'','القسم':'','الشركة':'',
+     'الإنجاز %':'','نسبة الحافز %':'','ملاحظات':'','شهر التقييم':''},
+    {'المستودع':'حافز 70-95%','الاسم':totalMid,'الوظيفة':'','القسم':'','الشركة':'',
+     'الإنجاز %':'','نسبة الحافز %':'','ملاحظات':'','شهر التقييم':''},
+    {'المستودع':'بدون حافز','الاسم':totalZero,'الوظيفة':'','القسم':'','الشركة':'',
+     'الإنجاز %':'','نسبة الحافز %':'','ملاحظات':'','شهر التقييم':''},
+    {'المستودع':'','الاسم':'','الوظيفة':'','القسم':'','الشركة':'',
+     'الإنجاز %':'','نسبة الحافز %':'','ملاحظات':'','شهر التقييم':''},
+  ];
+
+  if(incentiveRows.length) {
+    const ws1 = XLSX.utils.json_to_sheet([...incentiveSummary, ...incentiveRows]);
+    ws1['!views'] = [{rightToLeft:true}];
+    ws1['!cols'] = [{wch:18},{wch:22},{wch:20},{wch:16},{wch:16},{wch:12},{wch:14},{wch:20},{wch:14}];
+    XLSX.utils.book_append_sheet(wb, ws1, 'الحوافز — كل المستودعات');
+  }
+
+  // ══ Sheet 2: الحضور والساعات (مجمّعة) ══════════════════════
+  const attRows = [];
+  const whSummaryRows = []; // per-warehouse totals
+
+  for(const wh of window._cachedWarehouses || []) {
+    const att = wh.data?.attendanceData?.[key];
+    if(!att) continue;
+    const t = att.totals;
+
+    // Per-warehouse summary
+    whSummaryRows.push({
+      'المستودع':           wh.name,
+      'إجمالي الموظفين':   t.totalEmp||0,
+      'موظفون لديهم OT':   t.countOvertime||0,
+      'إجمالي OT (ساعة)':  t.totalOvertime||'00:00',
+      'إجمالي النقص (ساعة)':t.totalShortage||'00:00',
+    });
+
+    // Per-employee rows
+    for(const emp of att.employees||[]) {
+      const sign = emp.diffMins>0?'+':(emp.diffMins<0?'-':'');
+      attRows.push({
+        'المستودع':              wh.name,
+        'الاسم':                 emp.name,
+        'الرقم الوظيفي':        emp.id,
+        'ساعات مطلوبة':         emp.req,
+        'ساعات فعلية':          emp.worked,
+        'الفرق (OT / نقص)':    sign+emp.diffStr,
+        'نوع الفرق':            emp.diffMins>0?'عمل إضافي':emp.diffMins<0?'نقص':'مطابق',
+      });
+    }
+  }
+
+  if(whSummaryRows.length) {
+    // Sheet 2a: Per-warehouse summary
+    const ws2a = XLSX.utils.json_to_sheet(whSummaryRows);
+    ws2a['!views'] = [{rightToLeft:true}];
+    ws2a['!cols'] = [{wch:18},{wch:16},{wch:16},{wch:18},{wch:18}];
+    XLSX.utils.book_append_sheet(wb, ws2a, 'ملخص الساعات — مستودعات');
+
+    // Sheet 2b: Full employee attendance
+    const ws2b = XLSX.utils.json_to_sheet(attRows);
+    ws2b['!views'] = [{rightToLeft:true}];
+    ws2b['!cols'] = [{wch:18},{wch:22},{wch:14},{wch:14},{wch:14},{wch:16},{wch:14}];
+    XLSX.utils.book_append_sheet(wb, ws2b, 'تفصيل الحضور — موظفين');
+  }
+
+  // ══ Sheet 3: المعدات ═════════════════════════════════════════
+  const equipRows = [];
+  for(const wh of window._cachedWarehouses || []) {
+    const counts = wh.data?.equipmentCounts||{};
+    const equip  = wh.data?.equipment||[];
+    // Asset counts
+    for(const d of EQUIP_DEF) {
+      if((counts[d.key]||0)>0) {
+        equipRows.push({'المستودع':wh.name,'النوع':d.label,'العدد':counts[d.key]||0,'اسم المعدة':'—','ساعات التشغيل':'—','موعد الصيانة':'—','المتبقي':'—','الحالة':'أصل ثابت'});
+      }
+    }
+    // Tracked equipment
+    for(const eq of equip) {
+      const diff=parseInt(eq.maintHours)-parseInt(eq.opHours);
+      const sc=diff<=0?'متأخرة':diff<=100?'قريبة':'جيدة';
+      equipRows.push({'المستودع':wh.name,'النوع':'معدة متابَعة','العدد':1,'اسم المعدة':eq.name,'ساعات التشغيل':eq.opHours,'موعد الصيانة':eq.maintHours,'المتبقي':diff,'الحالة':sc});
+    }
+  }
+
+  if(equipRows.length) {
+    const ws3 = XLSX.utils.json_to_sheet(equipRows);
+    ws3['!views'] = [{rightToLeft:true}];
+    ws3['!cols'] = [{wch:18},{wch:16},{wch:8},{wch:22},{wch:14},{wch:14},{wch:10},{wch:12}];
+    XLSX.utils.book_append_sheet(wb, ws3, 'المعدات — كل المستودعات');
+  }
+
+  // ══ Sheet 4: Outbound ════════════════════════════════════════
+  const obRows = [];
+  const obSummaryRows = [];
+  for(const wh of window._cachedWarehouses || []) {
+    const ob = wh.data?.outbound;
+    if(!ob?.monthly) continue;
+    const moData = ob.monthly.filter(mo=>mo.mo==parseInt(m)&&mo.year==parseInt(y));
+    if(!moData.length) continue;
+    const mo = moData[0];
+    obSummaryRows.push({
+      'المستودع':          wh.name,
+      'Dispatched Orders': mo.orders||0,
+      'Rush Orders':       mo.rush||0,
+      'Cancelled':         (ob.cancelledMonthly||[]).find(c=>c.year==parseInt(y)&&MO[c.month]==parseInt(m))?.count||0,
+      'Ordered QTY':       mo.ordQty||0,
+      'Picked QTY':        mo.picQty||0,
+      'Short QTY':         mo.shQty||0,
+      'Dispatched QTY':    mo.disQty||0,
+      'Mean CS (ساعة)':    mo.avgCS||0,
+      'Median CS (ساعة)':  mo.medCS||0,
+      'Mean Picking (ساعة)': mo.avgPick||0,
+      'Median Picking (ساعة)': mo.medPick||0,
+    });
+    // Rush detail
+    const rushDetail = {
+      'المستودع':           wh.name+' (Rush)',
+      'Dispatched Orders':  mo.rush||0,
+      'Rush Orders':        mo.rush||0,
+      'Cancelled':          '—',
+      'Ordered QTY':        mo.rushOrdQty||0,
+      'Picked QTY':         mo.rushPicQty||0,
+      'Short QTY':          mo.rushShQty||0,
+      'Dispatched QTY':     mo.rushDisQty||0,
+      'Mean CS (ساعة)':     mo.rushAvgCS||0,
+      'Median CS (ساعة)':   mo.rushMedCS||0,
+      'Mean Picking (ساعة)':mo.rushAvgPick||0,
+      'Median Picking (ساعة)':mo.rushMedPick||0,
+    };
+    obSummaryRows.push(rushDetail);
+  }
+  if(obSummaryRows.length) {
+    const ws4 = XLSX.utils.json_to_sheet(obSummaryRows);
+    ws4['!views'] = [{rightToLeft:true}];
+    ws4['!cols'] = [{wch:20},{wch:16},{wch:12},{wch:10},{wch:14},{wch:12},{wch:12},{wch:14},{wch:14},{wch:16},{wch:16},{wch:18}];
+    XLSX.utils.book_append_sheet(wb, ws4, 'Outbound & Rush');
+  }
+
+  // ══ Sheet 5: ASN ═════════════════════════════════════════════
+  const asnRows = [];
+  for(const wh of window._cachedWarehouses || []) {
+    const asn = wh.data?.asn;
+    if(!asn?.monthly) continue;
+    const moData = asn.monthly.filter(mo=>mo.mo==parseInt(m)&&mo.year==parseInt(y));
+    if(!moData.length) continue;
+    const mo = moData[0];
+    asnRows.push({
+      'المستودع':           wh.name,
+      'TRK (Inbound)':      mo.orders||0,
+      'PO Lines':           mo.lines||0,
+      'Received QTY':       mo.qty||0,
+      'أيام عمل':           mo.days||0,
+      'متوسط TRK/يوم':      mo.avgOrd||0,
+      'متوسط QTY/يوم':      mo.avgQty||0,
+    });
+  }
+  if(asnRows.length) {
+    const ws5 = XLSX.utils.json_to_sheet(asnRows);
+    ws5['!views'] = [{rightToLeft:true}];
+    ws5['!cols'] = [{wch:18},{wch:14},{wch:12},{wch:14},{wch:10},{wch:14},{wch:14}];
+    XLSX.utils.book_append_sheet(wb, ws5, 'ASN Receipts');
+  }
+
+  if(wb.SheetNames.length===0) {
+    alert('لا توجد بيانات للتصدير في هذا الشهر');
+    return;
+  }
+
+  XLSX.writeFile(wb, `تقرير_المدير_${mName}_${y}.xlsx`);
+};
 
 </script>
 </body>
